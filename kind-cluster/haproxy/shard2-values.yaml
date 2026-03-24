@@ -8,7 +8,12 @@ controller:
     default: false
   watchNamespace: "team-beta,team-gamma"
   nodeSelector:
-    kubernetes.io/hostname: multi-cp-cluster-worker6
+    kubernetes.io/hostname: a-cluster-network-01
+  tolerations:
+    - key: role
+      operator: Equal
+      value: network
+      effect: NoSchedule
   replicaCount: 1
   service:
     type: ClusterIP

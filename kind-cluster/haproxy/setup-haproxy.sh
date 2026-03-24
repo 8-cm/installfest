@@ -2,12 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(realpath "$(dirname "$0")")"
-CLUSTER_NAME="multi-cp-cluster"
+CLUSTER_NAME="${CLUSTER_NAME:-a-cluster}"
 KUBECONFIG_PATH="${SCRIPT_DIR}/../${CLUSTER_NAME}.kubeconfig"
 KUBECTL="$(command -v kubectl)"
 K="${KUBECTL} --kubeconfig ${KUBECONFIG_PATH}"
 
 HAPROXY_VERSION="1.43.0"
+SHARD1_VALUES="${SHARD1_VALUES:-${SCRIPT_DIR}/shard1-values.yaml}"
+SHARD2_VALUES="${SHARD2_VALUES:-${SCRIPT_DIR}/shard2-values.yaml}"
 
 # ──────────────────────────────────────────────
 # 1. Helm repo
@@ -25,21 +27,21 @@ helm repo update haproxytech
 #    to avoid Helm's comma-separator conflict.
 # ──────────────────────────────────────────────
 echo ""
-echo "==> Installing haproxy-shard-1 (worker5 / team-alpha)"
+echo "==> Installing haproxy-shard-1 (network-00 / team-alpha)"
 helm upgrade --install haproxy-shard-1 haproxytech/kubernetes-ingress \
   --kubeconfig "${KUBECONFIG_PATH}" \
   --version "${HAPROXY_VERSION}" \
   --namespace haproxy-system \
   --create-namespace \
-  -f "${SCRIPT_DIR}/shard1-values.yaml"
+  -f "${SHARD1_VALUES}"
 
 echo ""
-echo "==> Installing haproxy-shard-2 (worker6 / team-beta + team-gamma)"
+echo "==> Installing haproxy-shard-2 (network-01 / team-beta + team-gamma)"
 helm upgrade --install haproxy-shard-2 haproxytech/kubernetes-ingress \
   --kubeconfig "${KUBECONFIG_PATH}" \
   --version "${HAPROXY_VERSION}" \
   --namespace haproxy-system \
-  -f "${SCRIPT_DIR}/shard2-values.yaml"
+  -f "${SHARD2_VALUES}"
 
 # ──────────────────────────────────────────────
 # 3. Wait for rollout

@@ -22,7 +22,7 @@ spec:
             - envsubst '${NAMESPACE} ${POD_NAME} ${NODE_NAME} ${MESSAGE}' < /tmpl/index.html > /html/index.html
           env:
             - name: MESSAGE
-              value: "team-alpha — egress via worker5 (172.19.0.5)"
+              value: "team-alpha — egress via network-00"
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
@@ -57,8 +57,8 @@ spec:
               mountPath: /usr/share/nginx/html
             - name: data
               mountPath: /data
-        # Cross-namespace curl sidecar — communicates via ingress, mixes in chaos errors
-        # every 6th attempt: TCP RST (blackhole), every 4th: HTTP 404, otherwise: 200
+        # Cross-namespace curl sidecar — local + peer cluster traffic with chaos
+        # every 6th: TCP RST (blackhole), every 4th: HTTP 404, every 5th: peer cluster
         - name: gen-cross
           image: curlimages/curl:latest
           env:
@@ -70,6 +70,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -79,7 +83,12 @@ spec:
                 N=$((N+1))
                 TS=$(date -u +%H%M%S)
                 if [ $((N%2)) -eq 0 ]; then THOST="team-beta.example.com"; else THOST="team-gamma.example.com"; fi
-                if [ $((N%6)) -eq 0 ]; then
+                if [ $((N%5)) -eq 0 ] && [ -n "${PEER_SHARD2:-}" ]; then
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                    -H "Host: $THOST" \
+                    "http://${PEER_SHARD2}/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}&via=peer" 2>/dev/null)
+                  printf '[%s] peer → %s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
+                elif [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
                     http://blackhole.team-alpha.svc.cluster.local/ 2>/dev/null)
                   [ "$CODE" = "000" ] && CODE="refused"

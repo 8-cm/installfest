@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(realpath "$(dirname "$0")")"
-CLUSTER_NAME="multi-cp-cluster"
+CLUSTER_NAME="${CLUSTER_NAME:-a-cluster}"
 KUBECONFIG_PATH="${SCRIPT_DIR}/${CLUSTER_NAME}.kubeconfig"
 KUBECTL="$(command -v kubectl)"
 K="${KUBECTL} --kubeconfig ${KUBECONFIG_PATH}"

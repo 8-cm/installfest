@@ -1,14 +1,14 @@
 controller:
   kind: DaemonSet
-  ingressClass: haproxy-shard-1
+  ingressClass: haproxy-shard-2
   ingressClassResource:
-    name: haproxy-shard-1
-    controllerValue: haproxy.org/haproxy-shard-1
+    name: haproxy-shard-2
+    controllerValue: haproxy.org/haproxy-shard-2
     enabled: true
     default: false
-  watchNamespace: "team-alpha"
+  watchNamespace: "team-beta,team-gamma"
   nodeSelector:
-    kubernetes.io/hostname: a-cluster-network-00
+    kubernetes.io/hostname: b-cluster-network-01
   tolerations:
     - key: role
       operator: Equal

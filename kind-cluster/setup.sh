@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER_CONFIG="$(dirname "$0")/cluster.yaml"
-CLUSTER_NAME="multi-cp-cluster"
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-$(dirname "$0")/cluster.yaml}"
+CLUSTER_NAME="${CLUSTER_NAME:-a-cluster}"
 CILIUM_VERSION="1.16.5"
 KUBECONFIG_PATH="$(realpath "$(dirname "$0")")/${CLUSTER_NAME}.kubeconfig"
 # Use the real binary to bypass any kubectl/oc aliases
@@ -16,7 +16,7 @@ done
 # ──────────────────────────────────────────────
 # 1. Create Kind cluster
 # ──────────────────────────────────────────────
-echo "==> Creating Kind cluster: ${CLUSTER_NAME}"
+echo "==> Creating Kind cluster: ${CLUSTER_NAME} (config: ${CLUSTER_CONFIG})"
 kind create cluster --config "${CLUSTER_CONFIG}"
 
 echo "==> Exporting kubeconfig to ${KUBECONFIG_PATH}"
@@ -29,10 +29,12 @@ echo "==> Waiting for all nodes to register..."
 # ──────────────────────────────────────────────
 # 2. Label network nodes (worker5 and worker6)
 # ──────────────────────────────────────────────
-echo "==> Labelling network nodes"
-for node in "${CLUSTER_NAME}-worker5" "${CLUSTER_NAME}-worker6"; do
+echo "==> Labelling and tainting network nodes"
+for node in "${CLUSTER_NAME}-network-00" "${CLUSTER_NAME}-network-01"; do
   "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" label node "$node" \
     node-role=network kubernetes.io/role=network --overwrite
+  "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" taint node "$node" \
+    role=network:NoSchedule --overwrite
 done
 
 # ──────────────────────────────────────────────
@@ -49,7 +51,7 @@ helm install cilium cilium/cilium \
   --namespace kube-system \
   --set ipam.mode=kubernetes \
   --set kubeProxyReplacement=true \
-  --set k8sServiceHost="${CLUSTER_NAME}-control-plane" \
+  --set k8sServiceHost="${CLUSTER_NAME}-control-plane-00" \
   --set k8sServicePort=6443 \
   --set image.pullPolicy=IfNotPresent \
   --set operator.replicas=2 \

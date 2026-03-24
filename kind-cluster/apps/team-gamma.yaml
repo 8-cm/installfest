@@ -68,6 +68,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -78,11 +82,16 @@ spec:
                 N=$((N+1))
                 TS=$(date -u +%H%M%S)
                 if [ $((N%2)) -eq 0 ]; then
-                  THOST="team-alpha.example.com"; SHARD=$SHARD1
+                  THOST="team-alpha.example.com"; LOCAL_SHARD=$SHARD1; PEER_S="${PEER_SHARD1:-}"
                 else
-                  THOST="team-beta.example.com"; SHARD=$SHARD2
+                  THOST="team-beta.example.com"; LOCAL_SHARD=$SHARD2; PEER_S="${PEER_SHARD2:-}"
                 fi
-                if [ $((N%6)) -eq 0 ]; then
+                if [ $((N%5)) -eq 0 ] && [ -n "${PEER_S}" ]; then
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                    -H "Host: $THOST" \
+                    "http://${PEER_S}/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}&via=peer" 2>/dev/null)
+                  printf '[%s] peer → %s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
+                elif [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
                     http://blackhole.team-gamma.svc.cluster.local/ 2>/dev/null)
                   [ "$CODE" = "000" ] && CODE="refused"
@@ -90,12 +99,12 @@ spec:
                 elif [ $((N%4)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                     -H "Host: $THOST" \
-                    "http://$SHARD/chaos-not-found?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
+                    "http://$LOCAL_SHARD/chaos-not-found?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
                   printf '[%s] chaos → %s/not-found: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
                 else
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                     -H "Host: $THOST" \
-                    "http://$SHARD/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
+                    "http://$LOCAL_SHARD/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
                   printf '[%s] cross → %s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
                 fi
                 sleep 8
