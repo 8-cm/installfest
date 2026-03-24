@@ -46,7 +46,6 @@ spec:
             - name: html
               mountPath: /html
       containers:
-        # ── internal traffic ──────────────────────────────────
         - name: gen-internal
           image: curlimages/curl:latest
           command: ["/bin/sh", "-c"]
@@ -61,7 +60,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-        # ── cross-namespace traffic ───────────────────────────
         - name: gen-cross
           image: curlimages/curl:latest
           command: ["/bin/sh", "-c"]
@@ -77,35 +75,46 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-        # ── external traffic ──────────────────────────────────
         - name: gen-external
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
-                [ "$CODE" = "000" ] && CODE="refused"
-                printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                if [ -n "${PEER_SHARD1:-}" ]; then
+                  THOST="team-alpha.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD1}/ 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → peer/%s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                fi
                 sleep 20
               done
           volumeMounts:
             - name: data
               mountPath: /data
-        # ── chaos generator (cross-namespace via ingress, deliberate errors) ──
-        # Every 6th attempt: timeout (blackhole service, no endpoints)
-        # Every 4th attempt: HTTP 404 (bad path through ingress)
-        # Otherwise: normal request through ingress with Host header
         - name: gen-chaos
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: cluster-config
           command: ["/bin/sh", "-c"]
           args:
             - |
               SHARD2=haproxy-shard-2-kubernetes-ingress.haproxy-system.svc.cluster.local
+              DOMAIN="${CLUSTER_DOMAIN:-a-cluster}"
               N=0
               while true; do
                 N=$((N+1))
-                if [ $((N%2)) -eq 0 ]; then THOST="team-beta.example.com"; else THOST="team-gamma.example.com"; fi
+                if [ $((N%2)) -eq 0 ]; then THOST="team-beta.${DOMAIN}"; else THOST="team-gamma.${DOMAIN}"; fi
                 if [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
                     http://blackhole.team-alpha.svc.cluster.local/ 2>/dev/null)
@@ -125,7 +134,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-        # ── nginx dashboard ───────────────────────────────────
         - name: nginx
           image: nginx:alpine
           ports:
@@ -170,7 +178,7 @@ metadata:
 spec:
   ingressClassName: haproxy-shard-1
   rules:
-    - host: traffic-alpha.example.com
+    - host: traffic-alpha.${INGRESS_DOMAIN}
       http:
         paths:
           - path: /
@@ -257,13 +265,25 @@ spec:
               mountPath: /data
         - name: gen-external
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
-                [ "$CODE" = "000" ] && CODE="refused"
-                printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                if [ -n "${PEER_SHARD2:-}" ]; then
+                  THOST="team-beta.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD2}/ 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → peer/%s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                fi
                 sleep 20
               done
           volumeMounts:
@@ -271,18 +291,22 @@ spec:
               mountPath: /data
         - name: gen-chaos
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: cluster-config
           command: ["/bin/sh", "-c"]
           args:
             - |
               SHARD1=haproxy-shard-1-kubernetes-ingress.haproxy-system.svc.cluster.local
               SHARD2=haproxy-shard-2-kubernetes-ingress.haproxy-system.svc.cluster.local
+              DOMAIN="${CLUSTER_DOMAIN:-a-cluster}"
               N=0
               while true; do
                 N=$((N+1))
                 if [ $((N%2)) -eq 0 ]; then
-                  THOST="team-alpha.example.com"; SHARD=$SHARD1
+                  THOST="team-alpha.${DOMAIN}"; SHARD=$SHARD1
                 else
-                  THOST="team-gamma.example.com"; SHARD=$SHARD2
+                  THOST="team-gamma.${DOMAIN}"; SHARD=$SHARD2
                 fi
                 if [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
@@ -347,7 +371,7 @@ metadata:
 spec:
   ingressClassName: haproxy-shard-2
   rules:
-    - host: traffic-beta.example.com
+    - host: traffic-beta.${INGRESS_DOMAIN}
       http:
         paths:
           - path: /
@@ -434,13 +458,25 @@ spec:
               mountPath: /data
         - name: gen-external
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
-                [ "$CODE" = "000" ] && CODE="refused"
-                printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                if [ -n "${PEER_SHARD1:-}" ]; then
+                  THOST="team-gamma.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD1}/ 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → peer/%s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null)
+                  [ "$CODE" = "000" ] && CODE="refused"
+                  printf '[%s] external → example.com: %s\n' "$(date -u +%H:%M:%S)" "$CODE" >> /data/out.log
+                fi
                 sleep 20
               done
           volumeMounts:
@@ -448,18 +484,22 @@ spec:
               mountPath: /data
         - name: gen-chaos
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: cluster-config
           command: ["/bin/sh", "-c"]
           args:
             - |
               SHARD1=haproxy-shard-1-kubernetes-ingress.haproxy-system.svc.cluster.local
               SHARD2=haproxy-shard-2-kubernetes-ingress.haproxy-system.svc.cluster.local
+              DOMAIN="${CLUSTER_DOMAIN:-a-cluster}"
               N=0
               while true; do
                 N=$((N+1))
                 if [ $((N%2)) -eq 0 ]; then
-                  THOST="team-alpha.example.com"; SHARD=$SHARD1
+                  THOST="team-alpha.${DOMAIN}"; SHARD=$SHARD1
                 else
-                  THOST="team-beta.example.com"; SHARD=$SHARD2
+                  THOST="team-beta.${DOMAIN}"; SHARD=$SHARD2
                 fi
                 if [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
@@ -524,7 +564,7 @@ metadata:
 spec:
   ingressClassName: haproxy-shard-2
   rules:
-    - host: traffic-gamma.example.com
+    - host: traffic-gamma.${INGRESS_DOMAIN}
       http:
         paths:
           - path: /

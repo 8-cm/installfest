@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER_CONFIG="$(dirname "$0")/cluster.yaml"
-CLUSTER_NAME="multi-cp-cluster"
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-$(dirname "$0")/cluster.yaml}"
+CLUSTER_NAME="${CLUSTER_NAME:-a-cluster}"
 CILIUM_VERSION="1.16.5"
 KUBECONFIG_PATH="$(realpath "$(dirname "$0")")/${CLUSTER_NAME}.kubeconfig"
 # Use the real binary to bypass any kubectl/oc aliases
@@ -16,8 +16,12 @@ done
 # ──────────────────────────────────────────────
 # 1. Create Kind cluster
 # ──────────────────────────────────────────────
-echo "==> Creating Kind cluster: ${CLUSTER_NAME}"
-kind create cluster --config "${CLUSTER_CONFIG}"
+if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+  echo "==> ${CLUSTER_NAME} already exists — skipping cluster creation"
+else
+  echo "==> Creating Kind cluster: ${CLUSTER_NAME} (config: ${CLUSTER_CONFIG})"
+  kind create cluster --config "${CLUSTER_CONFIG}"
+fi
 
 echo "==> Exporting kubeconfig to ${KUBECONFIG_PATH}"
 kind get kubeconfig --name "${CLUSTER_NAME}" > "${KUBECONFIG_PATH}"
@@ -27,13 +31,19 @@ echo "==> Waiting for all nodes to register..."
 "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" wait --for=condition=Ready nodes --all --timeout=180s || true
 
 # ──────────────────────────────────────────────
-# 2. Label network nodes (worker5 and worker6)
+# 2. Label network nodes (Kind auto-names them worker5 / worker6)
 # ──────────────────────────────────────────────
-echo "==> Labelling network nodes"
-for node in "${CLUSTER_NAME}-worker5" "${CLUSTER_NAME}-worker6"; do
-  "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" label node "$node" \
-    node-role=network kubernetes.io/role=network --overwrite
-done
+echo "==> Labelling and tainting network nodes"
+# worker5 = shard-1 (network-index=0), worker6 = shard-2 (network-index=1)
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" label node "${CLUSTER_NAME}-worker5" \
+  node-role=network kubernetes.io/role=network network-index=0 --overwrite
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" taint node "${CLUSTER_NAME}-worker5" \
+  role=network:NoSchedule --overwrite
+
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" label node "${CLUSTER_NAME}-worker6" \
+  node-role=network kubernetes.io/role=network network-index=1 --overwrite
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" taint node "${CLUSTER_NAME}-worker6" \
+  role=network:NoSchedule --overwrite
 
 # ──────────────────────────────────────────────
 # 3. Install Cilium via Helm
@@ -43,7 +53,7 @@ helm repo add cilium https://helm.cilium.io/ --force-update
 helm repo update
 
 echo "==> Installing Cilium ${CILIUM_VERSION}"
-helm install cilium cilium/cilium \
+helm upgrade --install cilium cilium/cilium \
   --kubeconfig "${KUBECONFIG_PATH}" \
   --version "${CILIUM_VERSION}" \
   --namespace kube-system \
@@ -54,6 +64,7 @@ helm install cilium cilium/cilium \
   --set image.pullPolicy=IfNotPresent \
   --set operator.replicas=2 \
   --set egressGateway.enabled=true \
+  --set bpf.masquerade=true \
   --set hubble.relay.enabled=true \
   --set hubble.ui.enabled=true
 
@@ -81,11 +92,15 @@ echo "==> Installing metrics-server"
 "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" apply \
   -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
-echo "==> Patching metrics-server: disabling kubelet TLS verification (Kind)"
-"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" patch deployment metrics-server \
-  -n kube-system \
-  --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+if ! "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" get deployment metrics-server \
+    -n kube-system -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null \
+    | grep -q 'kubelet-insecure-tls'; then
+  echo "==> Patching metrics-server: disabling kubelet TLS verification (Kind)"
+  "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" patch deployment metrics-server \
+    -n kube-system \
+    --type=json \
+    -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+fi
 
 "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" rollout status deployment/metrics-server \
   -n kube-system --timeout=120s

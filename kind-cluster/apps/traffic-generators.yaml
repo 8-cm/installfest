@@ -1,8 +1,7 @@
 # ─────────────────────────────────────────────────────────────
-# TEAM-ALPHA traffic generators
+# TEAM-ALPHA traffic generators (standalone — stdout only)
 # ─────────────────────────────────────────────────────────────
 ---
-# 1. Internal: always talks to hello in team-alpha
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +29,6 @@ spec:
                 sleep 5
               done
 ---
-# 2. Cross-namespace: randomly hits team-beta or team-gamma every 10-25s
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,7 +59,8 @@ spec:
                 sleep ${DELAY}
               done
 ---
-# 3. External: hits httpbin.org/ip to show which egress IP is used
+# gen-external: targets peer cluster ingress when PEER_SHARD1 is set,
+# otherwise falls back to example.com
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -80,12 +79,23 @@ spec:
       containers:
         - name: curl
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
-                echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                if [ -n "${PEER_SHARD1:-}" ]; then
+                  THOST="team-alpha.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD1}/ 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → peer/${THOST}: ${CODE}"
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                fi
                 sleep 20
               done
 
@@ -168,12 +178,23 @@ spec:
       containers:
         - name: curl
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
-                echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                if [ -n "${PEER_SHARD2:-}" ]; then
+                  THOST="team-beta.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD2}/ 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → peer/${THOST}: ${CODE}"
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                fi
                 sleep 20
               done
 
@@ -256,11 +277,22 @@ spec:
       containers:
         - name: curl
           image: curlimages/curl:latest
+          envFrom:
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               while true; do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
-                echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                if [ -n "${PEER_SHARD1:-}" ]; then
+                  THOST="team-gamma.${PEER_DOMAIN:-peer}"
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    -H "Host: $THOST" http://${PEER_SHARD1}/ 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → peer/${THOST}: ${CODE}"
+                else
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://example.com 2>/dev/null || echo "timeout")
+                  echo "[$(date -u +%H:%M:%S)] external → example.com: ${CODE}"
+                fi
                 sleep 20
               done

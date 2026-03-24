@@ -22,7 +22,7 @@ spec:
             - envsubst '${NAMESPACE} ${POD_NAME} ${NODE_NAME} ${MESSAGE}' < /tmpl/index.html > /html/index.html
           env:
             - name: MESSAGE
-              value: "team-beta — egress via worker6 (172.19.0.10)"
+              value: "team-beta — egress via network-01"
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
@@ -68,21 +68,35 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: cluster-config
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               SHARD1=haproxy-shard-1-kubernetes-ingress.haproxy-system.svc.cluster.local
               SHARD2=haproxy-shard-2-kubernetes-ingress.haproxy-system.svc.cluster.local
+              DOMAIN="${CLUSTER_DOMAIN:-a-cluster}"
               N=0
               while true; do
                 N=$((N+1))
                 TS=$(date -u +%H%M%S)
                 if [ $((N%2)) -eq 0 ]; then
-                  THOST="team-alpha.example.com"; SHARD=$SHARD1
+                  THOST="team-alpha.${DOMAIN}"; LOCAL_SHARD=$SHARD1
+                  PTHOST="team-alpha.${PEER_DOMAIN:-${DOMAIN}}"; PEER_S="${PEER_SHARD1:-}"
                 else
-                  THOST="team-gamma.example.com"; SHARD=$SHARD2
+                  THOST="team-gamma.${DOMAIN}"; LOCAL_SHARD=$SHARD2
+                  PTHOST="team-gamma.${PEER_DOMAIN:-${DOMAIN}}"; PEER_S="${PEER_SHARD2:-}"
                 fi
-                if [ $((N%6)) -eq 0 ]; then
+                if [ $((N%5)) -eq 0 ] && [ -n "${PEER_S}" ]; then
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                    -H "Host: $PTHOST" \
+                    "http://${PEER_S}/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}&via=peer" 2>/dev/null)
+                  printf '[%s] peer → %s: %s\n' "$(date -u +%H:%M:%S)" "$PTHOST" "$CODE" >> /data/out.log
+                elif [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
                     http://blackhole.team-beta.svc.cluster.local/ 2>/dev/null)
                   [ "$CODE" = "000" ] && CODE="refused"
@@ -90,12 +104,12 @@ spec:
                 elif [ $((N%4)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                     -H "Host: $THOST" \
-                    "http://$SHARD/chaos-not-found?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
+                    "http://$LOCAL_SHARD/chaos-not-found?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
                   printf '[%s] chaos → %s/not-found: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
                 else
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                     -H "Host: $THOST" \
-                    "http://$SHARD/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
+                    "http://$LOCAL_SHARD/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}" 2>/dev/null)
                   printf '[%s] cross → %s: %s\n' "$(date -u +%H:%M:%S)" "$THOST" "$CODE" >> /data/out.log
                 fi
                 sleep 8
@@ -132,7 +146,7 @@ metadata:
 spec:
   ingressClassName: haproxy-shard-2
   rules:
-    - host: team-beta.example.com
+    - host: team-beta.${INGRESS_DOMAIN}
       http:
         paths:
           - path: /

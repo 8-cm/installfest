@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(realpath "$(dirname "$0")")"
-CLUSTER_NAME="multi-cp-cluster"
+CLUSTER_NAME="${CLUSTER_NAME:-a-cluster}"
 KUBECONFIG_PATH="${SCRIPT_DIR}/../${CLUSTER_NAME}.kubeconfig"
 KUBECTL="$(command -v kubectl)"
 K="${KUBECTL} --kubeconfig ${KUBECONFIG_PATH}"
@@ -28,14 +28,14 @@ $K get crd ciliumegressgatewaypolicies.cilium.io
 # ──────────────────────────────────────────────
 # 2. Resolve network node IPs dynamically
 # ──────────────────────────────────────────────
-echo "==> Resolving network node IPs"
-WORKER5_IP=$($K get node "${CLUSTER_NAME}-worker5" \
-  -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-WORKER6_IP=$($K get node "${CLUSTER_NAME}-worker6" \
-  -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+echo "==> Resolving network node IPs (by network-index label)"
+NETWORK0_IP=$($K get node -l 'network-index=0' \
+  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+NETWORK1_IP=$($K get node -l 'network-index=1' \
+  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 
-echo "    worker5 → team-alpha egress IP: ${WORKER5_IP}"
-echo "    worker6 → team-beta  egress IP: ${WORKER6_IP}"
+echo "    network-index=0 (worker5) → team-alpha egress IP: ${NETWORK0_IP}"
+echo "    network-index=1 (worker6) → team-beta  egress IP: ${NETWORK1_IP}"
 
 # ──────────────────────────────────────────────
 # 3. Create namespaces
@@ -50,7 +50,7 @@ echo "==> Applying CiliumEgressGatewayPolicies"
 
 $K apply -f - <<EOF
 ---
-# team-alpha → egress via worker5 (${WORKER5_IP})
+# team-alpha → egress via network-00 (${NETWORK0_IP})
 apiVersion: cilium.io/v2
 kind: CiliumEgressGatewayPolicy
 metadata:
@@ -67,10 +67,10 @@ spec:
   egressGateway:
     nodeSelector:
       matchLabels:
-        kubernetes.io/hostname: ${CLUSTER_NAME}-worker5
-    egressIP: ${WORKER5_IP}
+        network-index: "0"
+    egressIP: ${NETWORK0_IP}
 ---
-# team-beta → egress via worker6 (${WORKER6_IP})
+# team-beta → egress via network-01 / worker6 (${NETWORK1_IP})
 apiVersion: cilium.io/v2
 kind: CiliumEgressGatewayPolicy
 metadata:
@@ -87,8 +87,8 @@ spec:
   egressGateway:
     nodeSelector:
       matchLabels:
-        kubernetes.io/hostname: ${CLUSTER_NAME}-worker6
-    egressIP: ${WORKER6_IP}
+        network-index: "1"
+    egressIP: ${NETWORK1_IP}
 EOF
 
 # ──────────────────────────────────────────────
@@ -104,8 +104,8 @@ $K get ciliumegressgatewaypolicies
 
 echo ""
 echo "==> To verify egress IPs (requires external connectivity from nodes):"
-echo "    # team-alpha pods egress from ${WORKER5_IP}"
+echo "    # team-alpha pods egress from ${NETWORK0_IP}"
 echo "    kubectl run test --image=curlimages/curl -n team-alpha --rm -it -- curl ifconfig.me"
 echo ""
-echo "    # team-beta pods egress from ${WORKER6_IP}"
+echo "    # team-beta pods egress from ${NETWORK1_IP}"
 echo "    kubectl run test --image=curlimages/curl -n team-beta --rm -it -- curl ifconfig.me"

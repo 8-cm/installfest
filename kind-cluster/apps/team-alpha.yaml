@@ -22,7 +22,7 @@ spec:
             - envsubst '${NAMESPACE} ${POD_NAME} ${NODE_NAME} ${MESSAGE}' < /tmpl/index.html > /html/index.html
           env:
             - name: MESSAGE
-              value: "team-alpha — egress via worker5 (172.19.0.5)"
+              value: "team-alpha — egress via network-00"
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
@@ -57,8 +57,6 @@ spec:
               mountPath: /usr/share/nginx/html
             - name: data
               mountPath: /data
-        # Cross-namespace curl sidecar — communicates via ingress, mixes in chaos errors
-        # every 6th attempt: TCP RST (blackhole), every 4th: HTTP 404, otherwise: 200
         - name: gen-cross
           image: curlimages/curl:latest
           env:
@@ -70,16 +68,32 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: cluster-config
+            - configMapRef:
+                name: peer-ingress
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
               SHARD2=haproxy-shard-2-kubernetes-ingress.haproxy-system.svc.cluster.local
+              DOMAIN="${CLUSTER_DOMAIN:-a-cluster}"
               N=0
               while true; do
                 N=$((N+1))
                 TS=$(date -u +%H%M%S)
-                if [ $((N%2)) -eq 0 ]; then THOST="team-beta.example.com"; else THOST="team-gamma.example.com"; fi
-                if [ $((N%6)) -eq 0 ]; then
+                if [ $((N%2)) -eq 0 ]; then
+                  THOST="team-beta.${DOMAIN}"; PTHOST="team-beta.${PEER_DOMAIN:-${DOMAIN}}"
+                else
+                  THOST="team-gamma.${DOMAIN}"; PTHOST="team-gamma.${PEER_DOMAIN:-${DOMAIN}}"
+                fi
+                if [ $((N%5)) -eq 0 ] && [ -n "${PEER_SHARD2:-}" ]; then
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                    -H "Host: $PTHOST" \
+                    "http://${PEER_SHARD2}/?from=${MY_NS}&pod=${MY_POD}&ts=${TS}&via=peer" 2>/dev/null)
+                  printf '[%s] peer → %s: %s\n' "$(date -u +%H:%M:%S)" "$PTHOST" "$CODE" >> /data/out.log
+                elif [ $((N%6)) -eq 0 ]; then
                   CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
                     http://blackhole.team-alpha.svc.cluster.local/ 2>/dev/null)
                   [ "$CODE" = "000" ] && CODE="refused"
@@ -129,7 +143,7 @@ metadata:
 spec:
   ingressClassName: haproxy-shard-1
   rules:
-    - host: team-alpha.example.com
+    - host: team-alpha.${INGRESS_DOMAIN}
       http:
         paths:
           - path: /
