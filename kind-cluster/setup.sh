@@ -114,12 +114,12 @@ echo "==> Waiting for Cilium pods..."
 # ──────────────────────────────────────────────
 # 5. Install wget on all nodes (required by kube-dump)
 # ──────────────────────────────────────────────
-echo "==> Installing wget on all cluster nodes"
+echo "==> Installing wget + tcpdump on all cluster nodes"
 for node in $(kind get nodes --name "${CLUSTER_NAME}" | grep -v 'external-load-balancer'); do
-  docker exec "$node" sh -c 'apt-get update -q 2>/dev/null && apt-get install -y wget -q' &
+  docker exec "$node" sh -c 'apt-get update -q 2>/dev/null && apt-get install -y wget tcpdump -q' &
 done
 wait
-echo "    wget installed on all nodes"
+echo "    wget + tcpdump installed on all nodes"
 
 # ──────────────────────────────────────────────
 # 6. PriorityClass for oc debug node
