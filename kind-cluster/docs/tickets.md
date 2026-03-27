@@ -143,3 +143,74 @@ kubectl get endpoints blackhole -n team-alpha
 **Odpověď Janě**
 
 > Není to bug ani blokování. Blackhole service je záměrně nasazená bez podů — slouží k demonstraci jak Cilium reaguje na provoz na service bez endpointů. Místo timeoutu posílá okamžitý TCP RST, proto curl hlásí `connection refused`. Gen-chaos to dělá každých ~42 sekund jako součást chaos traffic patternu. V Hubble UI to vidíš jako `DROPPED` flow s důvodem `no endpoints`.
+
+---
+
+## TICKET-4491 · team-alpha · Priorita: Low
+
+**Název:** HTTP 404 chyby v logu traffic-monitor — chybná konfigurace ingress?
+
+**Nahlásil:** Jana P., SRE, team-alpha
+
+---
+
+**Popis problému**
+
+> Ahoj, zase já. V logu `traffic-monitor` vidíme pravidelné HTTP 404 záznamy — `chaos → /chaos-not-found: 404`. Bojíme se že máme špatně nakonfigurovaný ingress a část provozu padá do neexistující cesty. Je to náš problém nebo HAProxy?
+>
+> — Jana, 14:35
+
+---
+
+**Šetření**
+
+Zkontroloval jsem log:
+
+```bash
+kubectl logs -n team-alpha deploy/traffic-monitor -c gen-chaos --tail=10
+# [14:34:52] chaos → http://haproxy-shard-1/chaos-not-found: 404
+# [14:34:59] chaos →  blackhole.team-alpha: connection refused
+# [14:35:06] chaos → http://haproxy-shard-1/: 200
+```
+
+404 přichází pravidelně, ne náhodně. Zachytil jsem provoz na worker2 kde `traffic-monitor` běží — tentokrát filtruji podle HAProxy pod IP (ne ClusterIP, tu Cilium interceptuje v eBPF):
+
+```bash
+oc debug node/a-cluster-worker2 -n dummy --image=nicolaka/netshoot -- \
+  chroot /host bash -c '
+    PID=$(crictl inspect $(crictl ps -q --name gen-chaos) | jq .info.pid)
+    nsenter -t $PID -n -- tcpdump -i eth0 -n \
+      -w /tmp/chaos-404.pcap \
+      "host 10.244.8.140 or host 10.244.4.119" &
+    sleep 30 && kill %1 && sleep infinity'
+```
+
+Po stažení pcap (`oc -n dummy cp <pod>:/host/tmp/chaos-404.pcap ~/captures/chaos-404.pcap`) jsem otevřel ve Wireshark a použil filtr `http`:
+
+```
+GET /chaos-not-found HTTP/1.1
+Host: haproxy-shard-1-kubernetes-ingress.haproxy-system.svc
+→  HTTP/1.1 404 Not Found
+   Server: haproxy
+```
+
+HAProxy vrátil 404 protože žádné Ingress pravidlo neodpovídá cestě `/chaos-not-found`. Spojení bylo úspěšně navázáno (TCP handshake proběhl), odpověď přišla okamžitě — nejde o síťový problém.
+
+Ověřil jsem Ingress pravidla:
+
+```bash
+kubectl get ingress -n team-alpha
+# NAME               HOSTS                      PATHS
+# hello-ingress      team-alpha.a-cluster       /
+# traffic-ingress    traffic-alpha.a-cluster    /
+```
+
+Cesta `/chaos-not-found` v žádném pravidle neexistuje — HAProxy správně vrátí 404.
+
+**Root cause:** Záměrné chování gen-chaos. Každý čtvrtý request záměrně míří na neexistující cestu `/chaos-not-found` aby demonstroval jak HAProxy reaguje na nenamatchovaný path. Ingress konfigurace je správně.
+
+---
+
+**Odpověď Janě**
+
+> Ingress je správně nakonfigurovaný. Gen-chaos záměrně každý čtvrtý request posílá na `/chaos-not-found` — cestu která v Ingress pravidlech neexistuje. HAProxy na to standardně odpovídá 404. Jde o součást chaos traffic patternu pro demonstraci různých typů chyb. Pokud bys viděla 404 na cestách jako `/` nebo jiných validních endpointech, to by byl problém — tenhle ne.
