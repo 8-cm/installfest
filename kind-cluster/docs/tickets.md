@@ -91,7 +91,7 @@ Alternativa pokud nechceme fixovat na konkrétní node: nasadit Cilium Cluster M
 
 ## TICKET-4489 · team-alpha · Priorita: Medium
 
-**Název:** Aplikace hlásí chyby `000` v logu — je to síťový problém?
+**Název:** Aplikace hlásí chyby `connection refused` v logu — je to síťový problém?
 
 **Nahlásil:** Jana P., SRE, team-alpha
 
@@ -99,7 +99,7 @@ Alternativa pokud nechceme fixovat na konkrétní node: nasadit Cilium Cluster M
 
 **Popis problému**
 
-> V logu `traffic-monitor` vidíme záznamy `chaos → blackhole: 000`. Nevíme jestli je to bug v aplikaci nebo nám někdo blokuje provoz. Může se podívat?
+> V logu `traffic-monitor` vidíme záznamy `chaos → blackhole: connection refused`. Nevíme jestli je to bug v aplikaci nebo nám někdo blokuje provoz. Může se podívat?
 >
 > — Jana, 14:02
 
@@ -111,12 +111,12 @@ Zkontroloval jsem log:
 
 ```bash
 kubectl logs -n team-alpha deploy/traffic-monitor -c gen-chaos --tail=10
-# [14:01:49] chaos → blackhole.team-alpha: 000
+# [14:01:49] chaos → blackhole.team-alpha: connection refused
 # [14:01:56] chaos → http://haproxy-shard-1/chaos-not-found: 404
 # [14:02:03] chaos → http://haproxy-shard-1/: 200
 ```
 
-HTTP kód `000` = curl nedostal žádnou odpověď — spojení odmítnuto před HTTP handshake. Zachytil jsem na nodu kde `traffic-monitor` běží (worker2):
+`connection refused` = curl dostal TCP RST — spojení odmítnuto před HTTP handshake. Zachytil jsem na nodu kde `traffic-monitor` běží (worker2):
 
 ```bash
 oc debug node/a-cluster-worker2 -- \
@@ -136,10 +136,10 @@ kubectl get endpoints blackhole -n team-alpha
 # blackhole   <none>      2d
 ```
 
-**Root cause:** Záměrné chování. `blackhole` service nemá žádné endpointy — selektor `app=blackhole-nonexistent` záměrně neodpovídá žádnému podu. Cilium na to reaguje okamžitým TCP RST bez čekání na timeout. HTTP kód `000` je správná odpověď curl na RST. Nejde o síťový problém ani bug.
+**Root cause:** Záměrné chování. `blackhole` service nemá žádné endpointy — selektor `app=blackhole-nonexistent` záměrně neodpovídá žádnému podu. Cilium na to reaguje okamžitým TCP RST bez čekání na timeout. `connection refused` je správná odpověď curl na TCP RST. Nejde o síťový problém ani bug.
 
 ---
 
 **Odpověď Janě**
 
-> Není to bug ani blokování. Blackhole service je záměrně nasazená bez podů — slouží k demonstraci jak Cilium reaguje na provoz na service bez endpointů. Místo timeoutu posílá okamžitý TCP RST, proto curl vrací `000`. Gen-chaos to dělá každých ~42 sekund jako součást chaos traffic patternu. V Hubble UI to vidíš jako `DROPPED` flow s důvodem `no endpoints`.
+> Není to bug ani blokování. Blackhole service je záměrně nasazená bez podů — slouží k demonstraci jak Cilium reaguje na provoz na service bez endpointů. Místo timeoutu posílá okamžitý TCP RST, proto curl hlásí `connection refused`. Gen-chaos to dělá každých ~42 sekund jako součást chaos traffic patternu. V Hubble UI to vidíš jako `DROPPED` flow s důvodem `no endpoints`.
