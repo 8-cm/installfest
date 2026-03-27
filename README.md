@@ -6,16 +6,18 @@ Designed as a hands-on POC for network analysis with `tcpdump`, `tshark`, Hubble
 
 ## What you can observe
 
-| Communication type | Capture point |
-|--------------------|---------------|
-| Pod to pod (same namespace, ClusterIP svc) | worker node veth or pod netns |
-| Pod to pod (cross-namespace, ClusterIP svc) | worker node, Hubble flow graph |
-| Ingress path (host to pod via HAProxy shard) | network node eth0 (`oc debug node/worker5 -- chroot /host tcpdump`) |
-| Egress pinned (alpha/beta) — deterministic SNAT | network node eth0 — source IP always = network node IP |
-| Egress unpinned (gamma) — non-deterministic | any worker node — source IP = pod's current node |
-| TCP RST from blackhole service (no endpoints) | pod netns or worker — SYN immediately followed by RST |
-| DNS queries (CoreDNS) | any node — UDP/TCP port 53 |
-| Cross-cluster TCP (Docker bridge) | host Docker bridge interface |
+| Communication type | Capture point | Příkaz |
+|--------------------|---------------|--------|
+| Pod to pod (same namespace, ClusterIP svc) | node — veth (node strana) | `oc debug node/<node> -- chroot /host tcpdump -i vethXXX -n` |
+| Pod to pod (same namespace, ClusterIP svc) | pod — eth0 | `oc debug node/<node> -- chroot /host bash -c 'nsenter -t $PID -n -- tcpdump -i eth0 -n'` |
+| Pod to pod (cross-namespace, ClusterIP svc) | worker node, Hubble flow graph | `oc debug node/<node> -- chroot /host tcpdump -i eth0 -n` |
+| Ingress path (host to pod via HAProxy shard) | node — eth0 (network-00) | `oc debug node/a-cluster-worker5 -- chroot /host tcpdump -i eth0 -n port 80` |
+| Ingress path (host to pod via HAProxy shard) | pod — HAProxy eth0 | `oc debug node/a-cluster-worker5 -- chroot /host bash -c 'nsenter -t $PID -n -- tcpdump -i eth0 -n'` |
+| Egress pinned (alpha/beta) — deterministic SNAT | node — eth0 (network node) | `oc debug node/a-cluster-worker5 -- chroot /host tcpdump -i eth0 -n` |
+| Egress unpinned (gamma) — non-deterministic | any worker node — source IP = pod's current node | `oc debug node/<gamma-node> -- chroot /host tcpdump -i eth0 -n` |
+| TCP RST from blackhole service (no endpoints) | pod — eth0 | `oc debug node/<node> -- chroot /host bash -c 'nsenter -t $PID -n -- tcpdump -i eth0 -n'` |
+| DNS queries (CoreDNS) | node — any | `oc debug node/<node> -- chroot /host tcpdump -i any -n udp port 53` |
+| Cross-cluster TCP (Docker bridge) | host Docker bridge (Linux only) | `sudo tcpdump -i br-kind -n tcp port 80` |
 
 See [docs/observability.md](kind-cluster/docs/observability.md) for exact tcpdump/tshark commands and vantage points.
 
