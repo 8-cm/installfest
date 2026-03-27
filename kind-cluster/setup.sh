@@ -122,7 +122,21 @@ wait
 echo "    wget installed on all nodes"
 
 # ──────────────────────────────────────────────
-# 6. Metrics Server (kubelet-insecure-tls needed for Kind self-signed certs)
+# 6. PriorityClass for oc debug node
+# ──────────────────────────────────────────────
+echo "==> Creating openshift-user-critical PriorityClass (required by oc debug node)"
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" apply -f - <<'EOF'
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: openshift-user-critical
+value: 1000000000
+globalDefault: false
+description: "Required by oc debug node on non-OpenShift clusters"
+EOF
+
+# ──────────────────────────────────────────────
+# 7. Metrics Server (kubelet-insecure-tls needed for Kind self-signed certs)
 # ──────────────────────────────────────────────
 echo "==> Installing metrics-server"
 "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" apply \
