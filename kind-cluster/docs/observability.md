@@ -261,12 +261,34 @@ Celá cesta od zdrojového podu v a-cluster až po cílový pod v b-cluster, vč
  (bez exec do podu)   PID=$(crictl inspect \
                         $(crictl ps -q --name <app>) | jq .info.pid)
                       nsenter -t $PID -n -- tcpdump -i eth0 -n'
+                    vidíš: veškerý provoz ven/dovnitř podu po/před NAT
+
+ pod lo             oc debug node/<node> -- chroot /host bash -c '
+ (loopback uvnitř    PID=$(crictl inspect \
+  pod netns)           $(crictl ps -q --name <app>) | jq .info.pid)
+                      nsenter -t $PID -n -- tcpdump -i lo -n'
+                    vidíš: sidecar↔kontejner přes 127.0.0.1
+                           VETH TOTO NEVIDÍ — lo zůstává v pod netns
 
  VXLAN tunnel       oc debug node/<node> -- \
  (cross-node)         chroot /host tcpdump -i eth0 -n 'udp port 8472'
 
  Docker bridge      sudo tcpdump -i br-kind -n            # Linux host only
 ```
+
+**Proč `lo` nejde chytit přes veth:**
+
+```
+┌─ pod netns ──────────────────────────────────────────────┐
+│                                                          │
+│  gen-cross ──lo:127.0.0.1──> nginx                      │  ← veth NEVIDÍ
+│                                                          │
+│  gen-cross ──eth0────────────────────────────────────────┼──> vethXXX
+│                                                          │  ← veth VIDÍ
+└──────────────────────────────────────────────────────────┘
+```
+
+Příklad: v `hello` podu komunikuje `gen-cross` sidecar s nginx přes `127.0.0.1:8080` — tohle je viditelné **pouze** přes `nsenter ... tcpdump -i lo`.
 
 ---
 
