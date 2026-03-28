@@ -122,7 +122,23 @@ wait
 echo "    wget + tcpdump installed on all nodes"
 
 # ──────────────────────────────────────────────
-# 6. PriorityClass for oc debug node
+# 6. Copy cilium + cilium-dbg to all nodes
+# ──────────────────────────────────────────────
+echo "==> Copying cilium-dbg to all nodes"
+CILIUM_POD=$("${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" get pod \
+  -n kube-system -l k8s-app=cilium \
+  -o jsonpath='{.items[0].metadata.name}')
+"${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" cp \
+  kube-system/"${CILIUM_POD}":/usr/bin/cilium-dbg /tmp/cilium-dbg-"${CLUSTER_NAME}"
+for node in $(kind get nodes --name "${CLUSTER_NAME}" | grep -v 'external-load-balancer'); do
+  docker cp /tmp/cilium-dbg-"${CLUSTER_NAME}" "${node}:/usr/local/bin/cilium-dbg" &
+done
+wait
+rm -f /tmp/cilium-dbg-"${CLUSTER_NAME}"
+echo "    cilium-dbg installed on all nodes"
+
+# ──────────────────────────────────────────────
+# 7. PriorityClass for oc debug node
 # ──────────────────────────────────────────────
 echo "==> Creating openshift-user-critical PriorityClass (required by oc debug node)"
 "${KUBECTL}" --kubeconfig "${KUBECONFIG_PATH}" apply -f - <<'EOF'
