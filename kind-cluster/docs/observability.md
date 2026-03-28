@@ -637,7 +637,8 @@ export KUBECONFIG=$(pwd)/a-cluster.kubeconfig
   -e 'tcpdump -i any -nn -s 0 -w /tmp/%t.pcap' \
   -s 'ls /tmp/%t.pcap' \
   -o ./captures/external-all \
-  --kill-switch-abs 50MB
+  --kill-switch-abs 50MB \
+  --install-deps
 ```
 
 Výstup v `captures/external-all/`:
@@ -664,7 +665,8 @@ export KUBECONFIG=$(pwd)/a-cluster.kubeconfig
   -e 'tcpdump -i any -nn -s 0 -c 200 -w /tmp/%t.pcap' \
   -s 'ls /tmp/%t.pcap' \
   -o ./captures/multi-label \
-  --kill-switch-abs 100MB
+  --kill-switch-abs 100MB \
+  --install-deps
 ```
 
 Každý `-l` je OR — skript najde pody splňující ANY selektor. V tomto případě 6 podů (3× traffic-external + 3× hello).
@@ -689,7 +691,8 @@ export KUBECONFIG=$(pwd)/a-cluster.kubeconfig
     -e http.response.code \
     2>/dev/null | tee /tmp/%t-http.log' \
   -S 'ls /tmp/%t-http.log' \
-  -o ./captures/network-nodes
+  -o ./captures/network-nodes \
+  --install-deps
 ```
 
 Pro pcap místo live výpisu:
@@ -699,7 +702,8 @@ Pro pcap místo live výpisu:
   -E 'tshark -i eth0 -f "tcp port 80" -w /tmp/%t.pcap' \
   -S 'ls /tmp/%t.pcap' \
   -o ./captures/network-nodes \
-  --kill-switch-abs 200MB
+  --kill-switch-abs 200MB \
+  --install-deps
 ```
 
 ---
@@ -738,7 +742,8 @@ export KUBECONFIG=$(pwd)/a-cluster.kubeconfig
   -s 'ls /tmp/%t-pod.pcap /tmp/%t-sockets.txt' \
   -S 'ls /tmp/%t-node-diag.log /tmp/%t-node.pcap' \
   -o ./captures/egress-debug \
-  --kill-switch-abs 200MB
+  --kill-switch-abs 200MB \
+  --install-deps
 ```
 
 Co spouští:
@@ -787,6 +792,7 @@ export KUBECONFIG=$(pwd)/a-cluster.kubeconfig
   --nsenter-params n,p \
   -s 'ls /tmp/strace/*.strace' \
   -o ./captures/strace-gamma \
+  --install-deps \
   --no-cleanup
 ```
 
